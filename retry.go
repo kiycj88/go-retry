@@ -1,4 +1,4 @@
-ipackage go_retry
+package go_retry
 
 import (
 	"reflect"
