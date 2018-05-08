@@ -3,6 +3,7 @@ package go_retry
 import (
 	"reflect"
 	"time"
+	"context"
 )
 
 type RetryStrategy interface {
@@ -165,22 +166,24 @@ type Retry struct{
 }
 
 func (r *Retry) Do(f func() error) error{
-	total_chan := make(chan error)
-	stop_chan := make(chan error)
-	defer close(stop_chan)
+	ctx, cancel := context.WithTimeout(context.Background(), r.Strategy.Total_Timeout())
+	defer cancel()
 
-	go func(c chan error){
+	total_chan := make(chan error)
+
+	go func(c chan error, ct context.Context){
 		defer close(c)
 		for{
 			timeout := false
 			err := f()
 			select {
-			case <- stop_chan:
+			case <- ct.Done():
+				c <- TotalTimeoutError{}
 				timeout = true
 				break
 			default:
 			}
-			if timeout{
+			if timeout {
 				break
 			}
 			needRetry, result := r.Strategy.NeedRetry(err)
@@ -189,15 +192,12 @@ func (r *Retry) Do(f func() error) error{
 				break
 			}
 		}
-	}(total_chan)
+	}(total_chan, ctx)
 
-	select{
-	case <- time.After(r.Strategy.Total_Timeout()):
-		stop_chan <- TotalTimeoutError{}
-		return TotalTimeoutError{}
-	case e := <- total_chan:
-		return e
-	}
+	e := <- total_chan
+
+	return e
+
 }
 
 func NewRetry(strategy RetryStrategy) Retry{
